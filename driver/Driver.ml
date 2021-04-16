@@ -21,6 +21,9 @@ open Assembler
 open Linker
 open Diagnostics
 
+open AST
+open SplitLong
+
 (* Name used for version string etc. *)
 let tool_name = "C verified compiler"
 
@@ -71,6 +74,66 @@ let compile_c_file sourcename ifile ofile =
   PrintAsm.print_program oc asm;
   close_out oc
 
+let explode s = List.init (String.length s) (String.get s)
+let add_external_func name sg prog =
+  (* let (last_id, _) = List.hd prog.prog_defs in *)
+  let atom = Camlcoq.intern_string name in
+  {prog with prog_defs = (atom, AST.Gfun (AST.External (AST.EF_runtime (explode name,  sg)))) :: prog.prog_defs}
+
+let add_external_funcs prog =
+  prog
+  |> add_external_func "__compcert_i64_dtos" sig_f_l
+  |> add_external_func "__compcert_i64_dtou" sig_f_l
+  |> add_external_func "__compcert_i64_stod" sig_l_f
+  |> add_external_func "__compcert_i64_utod" sig_l_f
+  |> add_external_func "__compcert_i64_stof" sig_l_s
+  |> add_external_func "__compcert_i64_utof" sig_l_s
+  |> add_external_func "__compcert_i64_sdiv" sig_ll_l
+  |> add_external_func "__compcert_i64_udiv" sig_ll_l
+  |> add_external_func "__compcert_i64_smod" sig_ll_l
+  |> add_external_func "__compcert_i64_umod" sig_ll_l
+  |> add_external_func "__compcert_i64_shl" sig_li_l
+  |> add_external_func "__compcert_i64_shr" sig_li_l
+  |> add_external_func "__compcert_i64_sar" sig_li_l
+  |> add_external_func "__compcert_i64_umulh" sig_ll_l
+  |> add_external_func "__compcert_i64_smulh" sig_ll_l
+
+let parse_cminor_file sourcename =
+  let json = Yojson.Safe.from_file sourcename in
+  Serialize.parse_program json
+
+let compile_cminor_file sourcename ofile =
+  (* Prepare to dump Clight, RTL, etc, if requested *)
+
+  let set_dest dst opt ext =
+    dst := if !opt then Some (output_filename sourcename ".cmj" ext)
+      else None in
+  set_dest PrintCminor.destination option_dcminor ".cm";
+  set_dest PrintRTL.destination option_drtl ".rtl";
+  set_dest Regalloc.destination_alloctrace option_dalloctrace ".alloctrace";
+  set_dest PrintLTL.destination option_dltl ".ltl";
+  set_dest PrintMach.destination option_dmach ".mach";
+  set_dest AsmToJSON.destination option_sdump !sdump_suffix;
+  (* Parse the JSON *)
+  let cminor = parse_cminor_file sourcename in
+  let fixed = add_external_funcs cminor in
+  (* Convert to Asm *)
+  let asm =
+    match Compiler.apply_partial
+                (Compiler.transf_cminor_program fixed)
+                Asmexpand.expand_program with
+    | Errors.OK asm ->
+        asm
+    | Errors.Error msg ->
+      let loc = file_loc sourcename in
+        fatal_error loc "%a"  print_error msg in
+  (* Dump Asm in binary and JSON format *)
+  AsmToJSON.print_if asm sourcename;
+  (* Print Asm in text form *)
+  let oc = open_out ofile in
+  PrintAsm.print_program oc asm;
+  close_out oc
+
 (* From C source to asm *)
 
 let compile_i_file sourcename preproname =
@@ -108,6 +171,24 @@ let process_c_file sourcename =
       tmp_file ".i" in
     preprocess sourcename preproname;
     compile_i_file sourcename preproname
+  end
+
+(* Processing of a .cmj file *)
+  
+let process_cminor_file sourcename =
+  ensure_inputfile_exists sourcename;
+  if !option_S then begin
+    compile_cminor_file sourcename (output_filename ~final:true sourcename ".cmj" ".s");
+    ""
+  end else begin
+    let asmname =
+      if !option_dasm
+      then output_filename sourcename ".cmj" ".s"
+      else tmp_file ".s" in
+    compile_cminor_file sourcename asmname;
+    let objname = object_filename sourcename ".cmj" in
+    assemble asmname objname;
+    objname
   end
 
 (* Processing of a .i / .p file (preprocessed C) *)
@@ -168,6 +249,7 @@ let usage_string =
   {|Usage: ccomp [options] <source files>
 Recognized source files:
   .c             C source file
+  .cmj           Cminor AST in JSON format
   .i or .p       C source file that should not be preprocessed
   .s             Assembly file
   .S or .sx      Assembly file that must be preprocessed
@@ -376,6 +458,8 @@ let cmdline_actions =
 (* File arguments *)
   Suffix ".c", Self (fun s ->
       push_action process_c_file s; incr num_source_files; incr num_input_files);
+  Suffix ".cmj", Self (fun s ->
+      push_action process_cminor_file s; incr num_source_files; incr num_input_files);
   Suffix ".i", Self (fun s ->
       push_action process_i_file s; incr num_source_files; incr num_input_files);
   Suffix ".p", Self (fun s ->

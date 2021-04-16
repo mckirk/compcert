@@ -610,6 +610,18 @@ case "$menhir_ver" in
         missingtools=true;;
 esac
 
+echo "Finding Yojson..." | tr -d '\n'
+yojson_dir=$(ocamlfind query yojson 2>/dev/null) || \
+yojson_dir=""
+
+echo "Finding Easy_Format..." | tr -d '\n'
+easyformat_dir=$(ocamlfind query easy-format 2>/dev/null) || \
+easyformat_dir=""
+
+echo "Finding Biniou..." | tr -d '\n'
+biniou_dir=$(ocamlfind query biniou 2>/dev/null) || \
+biniou_dir=""
+
 echo "Testing GNU make... " | tr -d '\n'
 make=''
 for mk in make gmake gnumake; do
@@ -648,6 +660,9 @@ COQDEVDIR=$coqdevdir
 OCAML_NATIVE_COMP=$ocaml_native_comp
 OCAML_OPT_COMP=$ocaml_opt_comp
 MENHIR_DIR=$menhir_dir
+YOJSON_DIR=$yojson_dir
+EASYFORMAT_DIR=$easyformat_dir
+BINIOU_DIR=$biniou_dir
 COMPFLAGS=-bin-annot
 EOF
 
@@ -842,6 +857,9 @@ CompCert configuration:
     Math library.................. $libmath
     Build command to use.......... $make
     Menhir API library............ $menhir_dir
+    Yojson API library............ $yojson_dir
+    Easy_format API library....... $easyformat_dir
+    Biniou API library............ $biniou_dir
     The Flocq library............. $library_Flocq
     The MenhirLib library......... $library_MenhirLib
     Binaries installed in......... $bindirexp
